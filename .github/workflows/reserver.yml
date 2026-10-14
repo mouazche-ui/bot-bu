@@ -2,9 +2,8 @@ name: Réservation BU
 
 on:
   schedule:
-    # Heure en UTC. 23:05 UTC = 00:05 à Paris (heure d'hiver), 01:05 en été.
-    # Dimanche -> jeudi soir UTC = lundi -> vendredi à Paris.
-    - cron: "5 23 * * 0-4"
+    # 6:30 UTC = 7:30 à Paris (heure d'hiver) / 8:30 (été), du lundi au vendredi.
+    - cron: "30 6 * * 1-5"
   workflow_dispatch:
     inputs:
       date:
