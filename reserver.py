@@ -32,7 +32,7 @@ NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 # ---------- Secrets (GitHub > Settings > Secrets) ----------
 EMAIL = os.environ["AFF_EMAIL"]                  # mail utilisé pour réserver
 IMAP_USER = os.environ.get("IMAP_USER", EMAIL)
-IMAP_PASS = os.environ["IMAP_PASS"]              # mot de passe d'application Gmail
+IMAP_PASS = os.environ["IMAP_PASS"].replace(" ", "").strip()              # mot de passe d'application Gmail
 IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
 TG_TOKEN = os.environ.get("TG_TOKEN")            # optionnel
 TG_CHAT = os.environ.get("TG_CHAT")              # optionnel
