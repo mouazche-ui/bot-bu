@@ -138,7 +138,8 @@ def main():
 
     log(f"Réservation demandée ✅ : {reservee}")
     telegram(f"📚 {reservee} demandée pour le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}.\n"
-             f"⚠️ Ouvre ton mail fac et clique « Confirmer » (2 h max), sinon c'est annulé.")
+             f"⚠️ Clique « Confirmer » dans le mail Affluences (2 h max).\n"
+             f"📬 Ta messagerie : https://webmail.univ-grenoble-alpes.fr")
 
 
 if __name__ == "__main__":
