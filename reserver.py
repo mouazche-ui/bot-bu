@@ -1,11 +1,9 @@
 """
 Réservation automatique Affluences - BU Joseph-Fourier
 Réserve la salle choisie, de 11h30 à 14h30, 14 jours à l'avance.
-Puis valide la réservation en cliquant le lien de confirmation reçu par mail
-(mail fac transféré vers Gmail par un filtre, le bot lit Gmail).
+La confirmation (lien reçu par mail, 2 h max) reste à faire à la main :
+le bot envoie une notification Telegram pour y penser.
 """
-import email
-import imaplib
 import json
 import os
 import re
@@ -32,10 +30,7 @@ NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
 # ---------- Secrets (GitHub > Settings > Secrets) ----------
 EMAIL = os.environ["AFF_EMAIL"].strip()          # mail universitaire utilisé pour réserver
-IMAP_USER = (os.environ.get("IMAP_USER") or "").strip()           # Gmail qui reçoit le transfert
-IMAP_PASS = (os.environ.get("IMAP_PASS") or "").replace(" ", "").strip()  # mot de passe d'application Gmail
-IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
-TG_TOKEN = os.environ.get("TG_TOKEN")            # optionnel
+TG_TOKEN = os.environ.get("TG_TOKEN")            # optionnel : notification Telegram
 TG_CHAT = os.environ.get("TG_CHAT")              # optionnel
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -104,54 +99,6 @@ def ordre_salles(salles):
     return ordre
 
 
-def dernier_uid(mail):
-    mail.select("inbox")
-    _, d = mail.uid("search", None, "ALL")
-    ids = d[0].split()
-    return int(ids[-1]) if ids else 0
-
-
-def corps(msg):
-    for part in msg.walk() if msg.is_multipart() else [msg]:
-        if part.get_content_type() in ("text/html", "text/plain"):
-            p = part.get_payload(decode=True)
-            if p:
-                return p.decode(errors="ignore")
-    return ""
-
-
-def attendre_lien(mail, uid_min, delai=300):
-    """Attend le mail Affluences et renvoie le lien de confirmation."""
-    fin = time.time() + delai
-    while time.time() < fin:
-        mail.select("inbox")
-        _, d = mail.uid("search", None, f"UID {uid_min + 1}:*")
-        for uid in d[0].split():
-            if int(uid) <= uid_min:
-                continue
-            _, m = mail.uid("fetch", uid, "(BODY.PEEK[])")
-            txt = corps(email.message_from_bytes(m[0][1])).replace("&amp;", "&")
-            lien = re.search(r'https://affluences\.com/[^\s"\'<>]*reservation/confirm\?reservationToken=[A-Za-z0-9-]+', txt)
-            if lien:
-                return lien.group(0)
-        time.sleep(10)
-    return None
-
-
-def valider(page, lien):
-    page.goto(lien, wait_until="networkidle")
-    page.wait_for_timeout(2000)
-    for mot in ["Confirmer", "Valider", "Confirm"]:
-        bouton = page.get_by_role("button", name=re.compile(mot, re.I))
-        if bouton.count():
-            bouton.first.click()
-            page.wait_for_timeout(3000)
-            break
-    texte = page.inner_text("body").lower()
-    log("Page de confirmation : " + texte[:300].replace("\n", " "))
-    return any(m in texte for m in ["confirmée", "confirmé", "confirmed", "validée"])
-
-
 def main():
     jour = date_cible()
     if jour.weekday() >= 5:
@@ -159,12 +106,6 @@ def main():
         return
     jour_txt = jour.isoformat()
     log(f"Objectif : {jour_txt} de {HEURE_DEBUT} à {HEURE_FIN}")
-
-    mail = None
-    if IMAP_USER and IMAP_PASS:
-        mail = imaplib.IMAP4_SSL(IMAP_HOST)
-        mail.login(IMAP_USER, IMAP_PASS)
-        uid_avant = dernier_uid(mail)
 
     with sync_playwright() as p:
         nav = p.chromium.launch()
@@ -189,29 +130,15 @@ def main():
                 reservee = nom
                 break
 
-        if not reservee:
-            telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Voir les logs GitHub.")
-            sys.exit(1)
-
-        if not mail:
-            log("Pas de Gmail configuré : confirme la réservation à la main (2 h max).")
-            sys.exit(1)
-
-        lien = attendre_lien(mail, uid_avant)
-        mail.logout()
-        if not lien:
-            log("Mail de confirmation pas reçu sur Gmail (filtre de transfert actif ?).")
-            telegram(f"⚠️ {reservee} demandée pour le {jour_txt}, mais mail pas reçu. Confirme à la main (2 h max) !")
-            sys.exit(1)
-
-        ok = valider(page, lien)
         nav.close()
 
-    if not ok:
-        telegram(f"⚠️ {reservee} le {jour_txt} : confirmation incertaine, vérifie tes mails fac.")
+    if not reservee:
+        telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Voir les logs GitHub.")
         sys.exit(1)
-    log(f"Réservation confirmée ✅ : {reservee}")
-    telegram(f"✅ {reservee} réservée et confirmée le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}. Si tu ne viens pas, annule-la.")
+
+    log(f"Réservation demandée ✅ : {reservee}")
+    telegram(f"📚 {reservee} demandée pour le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}.\n"
+             f"⚠️ Ouvre ton mail fac et clique « Confirmer » (2 h max), sinon c'est annulé.")
 
 
 if __name__ == "__main__":
