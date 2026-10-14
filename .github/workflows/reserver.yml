@@ -1,0 +1,29 @@
+name: Réservation BU
+
+on:
+  schedule:
+    # Heure en UTC. 23:05 UTC = 00:05 à Paris (heure d'hiver), 01:05 en été.
+    # Dimanche -> jeudi soir UTC = lundi -> vendredi à Paris.
+    - cron: "5 23 * * 0-4"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Date à tester (AAAA-MM-JJ). Vide = dans 14 jours"
+        required: false
+
+jobs:
+  reserver:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install playwright && python -m playwright install --with-deps chromium
+      - run: python reserver.py ${{ github.event.inputs.date }}
+        env:
+          AFF_EMAIL: ${{ secrets.AFF_EMAIL }}
+          IMAP_PASS: ${{ secrets.IMAP_PASS }}
+          TG_TOKEN: ${{ secrets.TG_TOKEN }}
+          TG_CHAT: ${{ secrets.TG_CHAT }}
