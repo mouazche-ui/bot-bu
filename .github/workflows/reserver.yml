@@ -25,5 +25,6 @@ jobs:
         env:
           AFF_EMAIL: ${{ secrets.AFF_EMAIL }}
           IMAP_PASS: ${{ secrets.IMAP_PASS }}
+          IMAP_USER: ${{ secrets.IMAP_USER }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
