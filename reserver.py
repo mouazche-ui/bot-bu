@@ -1,10 +1,8 @@
 """
 Réservation automatique Affluences - BU Joseph-Fourier
-Réserve la salle choisie, de 11h30 à 14h30, 14 jours à l'avance,
-puis valide la réservation en cliquant le lien reçu par mail.
+Réserve la salle choisie, de 11h30 à 14h30, 14 jours à l'avance.
+Pas de mail de validation à cliquer : la réservation est directe.
 """
-import email
-import imaplib
 import json
 import os
 import re
@@ -30,10 +28,7 @@ JOURS_AVANCE = 14
 NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
 # ---------- Secrets (GitHub > Settings > Secrets) ----------
-EMAIL = os.environ["AFF_EMAIL"]                  # mail utilisé pour réserver
-IMAP_USER = os.environ.get("IMAP_USER", EMAIL)
-IMAP_PASS = os.environ["IMAP_PASS"].replace(" ", "").strip()              # mot de passe d'application Gmail
-IMAP_HOST = os.environ.get("IMAP_HOST", "imap.gmail.com")
+EMAIL = os.environ["AFF_EMAIL"].strip()          # mail universitaire utilisé pour réserver
 TG_TOKEN = os.environ.get("TG_TOKEN")            # optionnel
 TG_CHAT = os.environ.get("TG_CHAT")              # optionnel
 
@@ -103,51 +98,6 @@ def ordre_salles(salles):
     return ordre
 
 
-def dernier_uid(mail):
-    mail.select("inbox")
-    _, d = mail.uid("search", None, "ALL")
-    ids = d[0].split()
-    return int(ids[-1]) if ids else 0
-
-
-def corps(msg):
-    for part in msg.walk() if msg.is_multipart() else [msg]:
-        if part.get_content_type() in ("text/html", "text/plain"):
-            p = part.get_payload(decode=True)
-            if p:
-                return p.decode(errors="ignore")
-    return ""
-
-
-def attendre_lien(mail, uid_min, delai=240):
-    fin = time.time() + delai
-    while time.time() < fin:
-        mail.select("inbox")
-        _, d = mail.uid("search", None, f"UID {uid_min + 1}:*")
-        for uid in d[0].split():
-            if int(uid) <= uid_min:
-                continue
-            _, m = mail.uid("fetch", uid, "(BODY.PEEK[])")
-            txt = corps(email.message_from_bytes(m[0][1])).replace("&amp;", "&")
-            lien = re.search(r'https://[^\s"\'<>]*affluences\.com[^\s"\'<>]*reservationToken=[A-Za-z0-9-]+', txt)
-            if lien:
-                return lien.group(0)
-        time.sleep(10)
-    return None
-
-
-def valider(page, lien):
-    page.goto(lien, wait_until="networkidle")
-    for mot in ["Confirmer", "Valider", "Confirm"]:
-        bouton = page.get_by_role("button", name=re.compile(mot, re.I))
-        if bouton.count():
-            bouton.first.click()
-            page.wait_for_timeout(3000)
-            break
-    texte = page.inner_text("body").lower()
-    return any(m in texte for m in ["confirm", "validée", "valide"])
-
-
 def main():
     jour = date_cible()
     if jour.weekday() >= 5:
@@ -155,10 +105,6 @@ def main():
         return
     jour_txt = jour.isoformat()
     log(f"Objectif : {jour_txt} de {HEURE_DEBUT} à {HEURE_FIN}")
-
-    mail = imaplib.IMAP4_SSL(IMAP_HOST)
-    mail.login(IMAP_USER, IMAP_PASS)
-    uid_avant = dernier_uid(mail)
 
     with sync_playwright() as p:
         nav = p.chromium.launch()
@@ -187,21 +133,10 @@ def main():
             telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Voir les logs GitHub.")
             sys.exit(1)
 
-        lien = attendre_lien(mail, uid_avant)
-        if not lien:
-            telegram(f"⚠️ {reservee} demandée pour le {jour_txt}, mais mail de validation pas reçu. Valide-le à la main !")
-            sys.exit(1)
-
-        ok = valider(page, lien)
         nav.close()
 
-    mail.logout()
-    if ok:
-        log("Réservation validée ✅")
-        telegram(f"✅ {reservee} réservée le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}. Si tu ne viens pas, annule-la.")
-    else:
-        telegram(f"⚠️ {reservee} le {jour_txt} : validation incertaine, vérifie tes mails.")
-        sys.exit(1)
+    log(f"Réservation faite ✅ : {reservee}")
+    telegram(f"✅ {reservee} réservée le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}. Si tu ne viens pas, annule-la.")
 
 
 if __name__ == "__main__":
