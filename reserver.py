@@ -1,6 +1,5 @@
 """
-Réservation automatique Affluences - BU Joseph-Fourier
-Réserve la salle choisie, de 11h30 à 14h30, 14 jours à l'avance.
+Réservation automatique Affluences - BU Joseph-Fourier & Validation Webmail UGA
 """
 import json
 import os
@@ -27,7 +26,9 @@ NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
 # ---------- Secrets (GitHub > Settings > Secrets) ----------
 EMAIL = os.environ["AFF_EMAIL"].strip()         # mail universitaire utilisé pour réserver
-TG_TOKEN = os.environ.get("TG_TOKEN")             # optionnel : notification Telegram
+UGA_USER = os.environ.get("UGA_USER")             # identifiant UGA pour le webmail
+UGA_PASS = os.environ.get("UGA_PASS")             # mot de passe UGA pour le webmail
+TG_TOKEN = os.environ.get("TG_TOKEN")             # optionnel : notification Telegram en cas d'erreur
 TG_CHAT = os.environ.get("TG_CHAT")               # optionnel
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -96,6 +97,51 @@ def ordre_salles(salles):
     return ordre
 
 
+def confirmer_mail(page):
+    """Se connecte au webmail UGA, trouve le mail d'Affluences et clique sur le lien de confirmation."""
+    if not (UGA_USER and UGA_PASS):
+        log("Identifiants UGA absents dans les secrets, impossible de valider le mail automatiquement.")
+        return False
+
+    log("Connexion au webmail UGA...")
+    page.goto("https://webmail.etu.univ-grenoble-alpes.fr", wait_until="domcontentloaded")
+    page.fill("#username", UGA_USER)
+    page.fill("#password", UGA_PASS)
+    page.click("#submitBtn")
+    page.wait_for_timeout(5000)
+
+    # Le mail peut mettre un peu de temps à arriver, on essaie plusieurs fois
+    for essai in range(1, 7):
+        log(f"Recherche du mail Affluences dans la boîte (essai {essai}/6)...")
+        page.wait_for_timeout(10000)
+
+        mails = page.get_by_text("Confirmez votre réservation : BU Joseph-Fourier")
+        if mails.count() == 0:
+            page.reload(wait_until="domcontentloaded")
+            continue
+
+        log("Mail trouvé, ouverture...")
+        mails.first.click()
+        page.wait_for_timeout(4000)
+
+        # Extraction du lien de confirmation dans les cadres (frames)
+        lien = None
+        for cadre in page.frames:
+            btn = cadre.locator("a", has_text="Confirmer ma réservation")
+            if btn.count() > 0:
+                lien = btn.first.get_attribute("href")
+                break
+
+        if lien:
+            log("Lien de confirmation extrait avec succès ! Validation...")
+            page.goto(lien, wait_until="networkidle")
+            page.wait_for_timeout(3000)
+            return True
+
+    log("❌ Échec : le mail de confirmation n'a pas été trouvé à temps.")
+    return False
+
+
 def main():
     jour = date_cible()
     if jour.weekday() >= 5:
@@ -107,6 +153,8 @@ def main():
     with sync_playwright() as p:
         nav = p.chromium.launch()
         page = nav.new_page(locale="fr-FR")
+        
+        # 1. Étape de réservation sur Affluences
         page.goto(f"https://affluences.com/fr/sites/{SITE_SLUG}/reservation?type={TYPE_ID}&date={jour_txt}",
                   wait_until="networkidle")
 
@@ -127,15 +175,23 @@ def main():
                 reservee = nom
                 break
 
+        if not reservee:
+            telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Salles pleines.")
+            nav.close()
+            sys.exit(1)
+
+        log(f"Réservation demandée sur Affluences ✅ : {reservee}")
+        
+        # 2. Étape de validation automatique via le Webmail UGA
+        succes_validation = confirmer_mail(page)
         nav.close()
 
-    if not reservee:
-        telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Voir les logs GitHub.")
+    if succes_validation:
+        log("🎉 Réservation complètement validée et confirmée de bout en bout !")
+        telegram(f"🎉 SUCCÈS : {reservee} réservée et confirmée automatiquement pour le {jour_txt} ({HEURE_DEBUT}-{HEURE_FIN}) !")
+    else:
+        telegram(f"⚠️ {reservee} demandée pour le {jour_txt}, mais la validation automatique du mail a échoué.")
         sys.exit(1)
-
-    log(f"Réservation demandée ✅ : {reservee}")
-    telegram(f"📚 {reservee} demandée pour le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}.\n"
-             f"⚠️ Valide ton mail pour l'instant !")
 
 
 if __name__ == "__main__":
