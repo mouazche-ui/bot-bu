@@ -1,14 +1,11 @@
 """
 Réservation automatique Affluences - BU Joseph-Fourier
 Réserve la salle choisie, de 11h30 à 14h30, 14 jours à l'avance.
-La confirmation (lien reçu par mail, 2 h max) reste à faire à la main :
-le bot envoie une notification Telegram pour y penser.
 """
 import json
 import os
 import re
 import sys
-import time
 import unicodedata
 import urllib.parse
 import urllib.request
@@ -20,18 +17,18 @@ from playwright.sync_api import sync_playwright
 # ---------- Réglages (modifiables) ----------
 SITE_SLUG = "bu-joseph-fourier"
 SITE_ID = "888a64d4-3c8d-4ebf-83a5-d9441b5431b9"
-TYPE_ID = "5249"                      # Salles de travail en groupe
-SALLES = ["RDC Sud n°4"]              # ordre de préférence
-SECOURS = "RDC Sud"                   # si prises : n'importe quelle salle dont le nom commence par ça
+TYPE_ID = "5249"                    # Salles de travail en groupe
+SALLES = ["RDC Sud n°4"]            # ordre de préférence
+SECOURS = "RDC Sud"                 # si prises : n'importe quelle salle dont le nom commence par ça
 HEURE_DEBUT = "11:30"
 HEURE_FIN = "14:30"
 JOURS_AVANCE = 14
 NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
 # ---------- Secrets (GitHub > Settings > Secrets) ----------
-EMAIL = os.environ["AFF_EMAIL"].strip()          # mail universitaire utilisé pour réserver
-TG_TOKEN = os.environ.get("TG_TOKEN")            # optionnel : notification Telegram
-TG_CHAT = os.environ.get("TG_CHAT")              # optionnel
+EMAIL = os.environ["AFF_EMAIL"].strip()         # mail universitaire utilisé pour réserver
+TG_TOKEN = os.environ.get("TG_TOKEN")             # optionnel : notification Telegram
+TG_CHAT = os.environ.get("TG_CHAT")               # optionnel
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -57,8 +54,8 @@ def normaliser(txt):
 
 def date_cible():
     d = datetime.now(PARIS).date() + timedelta(days=JOURS_AVANCE)
-    if len(sys.argv) > 1:                       # test manuel : python reserver.py 2026-10-28
-        d = datetime.strptime(sys.argv[1], "%Y-%m-%d").date()
+    if len(sys.argv) > 1 and sys.argv[1].strip():
+        d = datetime.strptime(sys.argv[1].strip(), "%Y-%m-%d").date()
     return d
 
 
@@ -138,8 +135,7 @@ def main():
 
     log(f"Réservation demandée ✅ : {reservee}")
     telegram(f"📚 {reservee} demandée pour le {jour_txt}, {HEURE_DEBUT}-{HEURE_FIN}.\n"
-             f"⚠️ Clique « Confirmer » dans le mail Affluences (2 h max).\n"
-             f"📬 Ta messagerie : https://webmail.univ-grenoble-alpes.fr")
+             f"⚠️ Valide ton mail pour l'instant !")
 
 
 if __name__ == "__main__":
