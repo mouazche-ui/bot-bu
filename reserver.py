@@ -13,23 +13,23 @@ from zoneinfo import ZoneInfo
 
 from playwright.sync_api import sync_playwright
 
-# ---------- Réglages (modifiables) ----------
+# ---------- Réglages ----------
 SITE_SLUG = "bu-joseph-fourier"
 SITE_ID = "888a64d4-3c8d-4ebf-83a5-d9441b5431b9"
 TYPE_ID = "5249"                    # Salles de travail en groupe
-SALLES = ["RDC Sud n°4"]            # ordre de préférence
-SECOURS = "RDC Sud"                 # si prises : n'importe quelle salle dont le nom commence par ça
+SALLES = ["RDC Sud n°4"]            # Ordre de préférence prioritaire
+SECOURS = "RDC Sud"                 # Si prises : n'importe quelle salle dont le nom commence par ça
 HEURE_DEBUT = "11:30"
 HEURE_FIN = "14:30"
 JOURS_AVANCE = 14
 NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
 # ---------- Secrets (GitHub > Settings > Secrets) ----------
-EMAIL = os.environ["AFF_EMAIL"].strip()         # mail universitaire utilisé pour réserver
-UGA_USER = os.environ.get("UGA_USER")             # identifiant UGA pour le webmail
-UGA_PASS = os.environ.get("UGA_PASS")             # mot de passe UGA pour le webmail
-TG_TOKEN = os.environ.get("TG_TOKEN")             # optionnel : notification Telegram en cas d'erreur
-TG_CHAT = os.environ.get("TG_CHAT")               # optionnel
+EMAIL = os.environ["AFF_EMAIL"].strip()
+UGA_USER = os.environ.get("UGA_USER")
+UGA_PASS = os.environ.get("UGA_PASS")
+TG_TOKEN = os.environ.get("TG_TOKEN")             # Optionnel : alerte en cas d'échec
+TG_CHAT = os.environ.get("TG_CHAT")               # Optionnel
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -61,7 +61,6 @@ def date_cible():
 
 
 def api(page, method, url, body=None):
-    """Appel fait depuis la page affluences.com (passe la protection anti-robot)."""
     return page.evaluate(
         """async ([method, url, body]) => {
             const r = await fetch(url, {
@@ -88,7 +87,6 @@ def trouver_salles(page, jour):
 
 
 def ordre_salles(salles):
-    """Salles préférées d'abord, puis toutes les autres 'RDC Sud'."""
     ordre = []
     for voulu in SALLES:
         ordre += [s for s in salles if normaliser(s[0]) == normaliser(voulu)]
@@ -98,9 +96,8 @@ def ordre_salles(salles):
 
 
 def confirmer_mail(page):
-    """Se connecte au webmail UGA, trouve le mail d'Affluences et clique sur le lien de confirmation."""
     if not (UGA_USER and UGA_PASS):
-        log("Identifiants UGA absents dans les secrets, impossible de valider le mail automatiquement.")
+        log("Identifiants UGA absents.")
         return False
 
     log("Connexion au webmail UGA...")
@@ -110,9 +107,8 @@ def confirmer_mail(page):
     page.click("#submitBtn")
     page.wait_for_timeout(5000)
 
-    # Le mail peut mettre un peu de temps à arriver, on essaie plusieurs fois
     for essai in range(1, 7):
-        log(f"Recherche du mail Affluences dans la boîte (essai {essai}/6)...")
+        log(f"Recherche du mail Affluences (essai {essai}/6)...")
         page.wait_for_timeout(10000)
 
         mails = page.get_by_text("Confirmez votre réservation : BU Joseph-Fourier")
@@ -124,7 +120,6 @@ def confirmer_mail(page):
         mails.first.click()
         page.wait_for_timeout(4000)
 
-        # Extraction du lien de confirmation dans les cadres (frames)
         lien = None
         for cadre in page.frames:
             btn = cadre.locator("a", has_text="Confirmer ma réservation")
@@ -133,7 +128,7 @@ def confirmer_mail(page):
                 break
 
         if lien:
-            log("Lien de confirmation extrait avec succès ! Validation...")
+            log("Lien de confirmation extrait ! Validation en cours...")
             page.goto(lien, wait_until="networkidle")
             page.wait_for_timeout(3000)
             return True
@@ -154,7 +149,6 @@ def main():
         nav = p.chromium.launch()
         page = nav.new_page(locale="fr-FR")
         
-        # 1. Étape de réservation sur Affluences
         page.goto(f"https://affluences.com/fr/sites/{SITE_SLUG}/reservation?type={TYPE_ID}&date={jour_txt}",
                   wait_until="networkidle")
 
@@ -182,13 +176,12 @@ def main():
 
         log(f"Réservation demandée sur Affluences ✅ : {reservee}")
         
-        # 2. Étape de validation automatique via le Webmail UGA
         succes_validation = confirmer_mail(page)
         nav.close()
 
     if succes_validation:
-        log("🎉 Réservation complètement validée et confirmée de bout en bout !")
-        telegram(f"🎉 SUCCÈS : {reservee} réservée et confirmée automatiquement pour le {jour_txt} ({HEURE_DEBUT}-{HEURE_FIN}) !")
+        log("🎉 Réservation complètement validée et confirmée !")
+        telegram(f"🎉 SUCCÈS : {reservee} réservée et validée automatiquement pour le {jour_txt} ({HEURE_DEBUT}-{HEURE_FIN}) !")
     else:
         telegram(f"⚠️ {reservee} demandée pour le {jour_txt}, mais la validation automatique du mail a échoué.")
         sys.exit(1)
