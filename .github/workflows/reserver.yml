@@ -23,7 +23,7 @@ jobs:
       - run: python reserver.py ${{ github.event.inputs.date }}
         env:
           AFF_EMAIL: ${{ secrets.AFF_EMAIL }}
-          IMAP_PASS: ${{ secrets.IMAP_PASS }}
-          IMAP_USER: ${{ secrets.IMAP_USER }}
+          UGA_USER: ${{ secrets.UGA_USER }}
+          UGA_PASS: ${{ secrets.UGA_PASS }}
           TG_TOKEN: ${{ secrets.TG_TOKEN }}
           TG_CHAT: ${{ secrets.TG_CHAT }}
