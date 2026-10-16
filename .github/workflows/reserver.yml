@@ -2,8 +2,10 @@ name: Réservation BU
 
 on:
   schedule:
-    # Se déclenche du lundi au vendredi à 7:30 (hiver) / 8:30 (été)
-    - cron: "30 6 * * 1-5"
+    # 1er passage tôt : 5h05 UTC = 7h05 (été) / 6h05 (hiver), du lundi au vendredi
+    - cron: "5 5 * * 1-5"
+    # 2e passage de sécurité (si GitHub a raté le 1er ou si Affluences ouvre à 7h30) : 5h45 UTC = 7h45 (été) / 6h45 (hiver)
+    - cron: "45 5 * * 1-5"
   workflow_dispatch:
     inputs:
       date:
