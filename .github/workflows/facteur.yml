@@ -1,0 +1,24 @@
+name: Facteur UGA vers Gmail
+
+on:
+  schedule:
+    # Se lance toutes les 5 minutes
+    - cron: "*/5 * * * *"
+  workflow_dispatch:
+
+jobs:
+  facteur:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install playwright && python -m playwright install --with-deps chromium
+      - run: python facteur.py
+        env:
+          UGA_USER: ${{ secrets.UGA_USER }}
+          UGA_PASS: ${{ secrets.UGA_PASS }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
