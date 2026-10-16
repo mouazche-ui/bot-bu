@@ -17,18 +17,18 @@ from playwright.sync_api import sync_playwright
 SITE_SLUG = "bu-joseph-fourier"
 SITE_ID = "888a64d4-3c8d-4ebf-83a5-d9441b5431b9"
 TYPE_ID = "5249"                    # Salles de travail en groupe
-SALLES = ["RDC Sud n°4"]            # Ordre de préférence prioritaire
-SECOURS = "RDC Sud"                 # Si prises : n'importe quelle salle dont le nom commence par ça
+SALLES = ["RDC Sud n°4"]            # 1er choix prioritaire
+SECOURS = "RDC Sud"                 # 2e choix : toutes les autres salles RDC Sud
 HEURE_DEBUT = "11:30"
 HEURE_FIN = "14:30"
 JOURS_AVANCE = 14
 NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
-# ---------- Secrets (GitHub > Settings > Secrets) ----------
+# ---------- Secrets (GitHub > Settings > Secrets and variables > Actions) ----------
 EMAIL = os.environ["AFF_EMAIL"].strip()
 UGA_USER = os.environ.get("UGA_USER")
 UGA_PASS = os.environ.get("UGA_PASS")
-TG_TOKEN = os.environ.get("TG_TOKEN")             # Optionnel : alerte en cas d'échec
+TG_TOKEN = os.environ.get("TG_TOKEN")             # Optionnel
 TG_CHAT = os.environ.get("TG_CHAT")               # Optionnel
 
 PARIS = ZoneInfo("Europe/Paris")
@@ -61,6 +61,7 @@ def date_cible():
 
 
 def api(page, method, url, body=None):
+    """Appel API depuis la page affluences.com."""
     return page.evaluate(
         """async ([method, url, body]) => {
             const r = await fetch(url, {
@@ -87,17 +88,23 @@ def trouver_salles(page, jour):
 
 
 def ordre_salles(salles):
+    """1. RDC Sud n°4 -> 2. Autres RDC Sud -> 3. N'importe quelle autre salle dispo."""
     ordre = []
+    # 1. Salle prioritaire (RDC Sud n°4)
     for voulu in SALLES:
         ordre += [s for s in salles if normaliser(s[0]) == normaliser(voulu)]
+    # 2. Autres salles RDC Sud
     ordre += [s for s in salles
               if normaliser(s[0]).startswith(normaliser(SECOURS)) and s not in ordre]
+    # 3. Toutes les autres salles (Étage Nord, etc.) en dernier recours
+    ordre += [s for s in salles if s not in ordre]
     return ordre
 
 
 def confirmer_mail(page):
+    """Se connecte au webmail UGA, ouvre le mail Affluences et valide la réservation."""
     if not (UGA_USER and UGA_PASS):
-        log("Identifiants UGA absents.")
+        log("Identifiants UGA absents dans les secrets GitHub.")
         return False
 
     log("Connexion au webmail UGA...")
@@ -148,7 +155,8 @@ def main():
     with sync_playwright() as p:
         nav = p.chromium.launch()
         page = nav.new_page(locale="fr-FR")
-        
+
+        # 1. Réservation sur Affluences
         page.goto(f"https://affluences.com/fr/sites/{SITE_SLUG}/reservation?type={TYPE_ID}&date={jour_txt}",
                   wait_until="networkidle")
 
@@ -169,19 +177,27 @@ def main():
                 reservee = nom
                 break
 
+            # Si le 1er passage du matin a déjà réservé une salle, on s'arrête proprement
+            txt_err = r["text"].lower()
+            if any(mot in txt_err for mot in ("already", "limite", "quota", "maximum", "déjà", "deja")):
+                log("Une réservation est déjà active pour ce jour/créneau. Rien à faire !")
+                nav.close()
+                return
+
         if not reservee:
-            telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Salles pleines.")
+            telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Toutes les salles sont prises.")
             nav.close()
             sys.exit(1)
 
         log(f"Réservation demandée sur Affluences ✅ : {reservee}")
-        
+
+        # 2. Validation automatique via le Webmail UGA
         succes_validation = confirmer_mail(page)
         nav.close()
 
     if succes_validation:
-        log("🎉 Réservation complètement validée et confirmée !")
-        telegram(f"🎉 SUCCÈS : {reservee} réservée et validée automatiquement pour le {jour_txt} ({HEURE_DEBUT}-{HEURE_FIN}) !")
+        log(f"🎉 SUCCÈS TOTAL : {reservee} réservée et confirmée pour le {jour_txt} !")
+        telegram(f"🎉 SUCCÈS : {reservee} réservée et confirmée automatiquement pour le {jour_txt} ({HEURE_DEBUT}-{HEURE_FIN}) !")
     else:
         telegram(f"⚠️ {reservee} demandée pour le {jour_txt}, mais la validation automatique du mail a échoué.")
         sys.exit(1)
