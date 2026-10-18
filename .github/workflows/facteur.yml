@@ -2,7 +2,6 @@ name: Facteur UGA vers Gmail
 
 on:
   schedule:
-    # Se lance toutes les 5 minutes
     - cron: "*/5 * * * *"
   workflow_dispatch:
 
@@ -15,6 +14,10 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Configuration DNS fiables (Google & Cloudflare)
+        run: |
+          sudo systemd-resolve --set-dns=8.8.8.8 --set-dns=1.1.1.1 --interface=eth0 || true
+          echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" | sudo tee /etc/resolv.conf
       - run: pip install playwright && python -m playwright install --with-deps chromium
       - run: python facteur.py
         env:
