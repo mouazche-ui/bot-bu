@@ -1,5 +1,6 @@
 """
 Réservation automatique Affluences - BU Joseph-Fourier & Validation Webmail UGA
+Multi-créneaux (Midi + Après-midi/Soir) avec découpage intelligent et priorités de salles.
 """
 import json
 import os
@@ -18,18 +19,73 @@ SITE_SLUG = "bu-joseph-fourier"
 SITE_ID = "888a64d4-3c8d-4ebf-83a5-d9441b5431b9"
 TYPE_ID = "5249"                    # Salles de travail en groupe
 SALLES = ["RDC Sud n°4"]            # 1er choix prioritaire
-SECOURS = "RDC Sud"                 # 2e choix : toutes les autres salles RDC Sud
-HEURE_DEBUT = "11:30"
-HEURE_FIN = "14:30"
+SECOURS_SUD = "RDC Sud"             # 2e choix : toutes les autres salles RDC Sud
+SECOURS_NORD = "Nord"               # 3e choix : toutes les salles Nord
 JOURS_AVANCE = 14
 NB_PERSONNES = int(os.environ.get("NB_PERSONNES", "2"))
 
-# ---------- Secrets (GitHub > Settings > Secrets and variables > Actions) ----------
+# ---------- Planning par jour (0 = Lundi ... 4 = Vendredi) ----------
+# Pour chaque créneau, on fournit une liste de variantes [Prioritaire, Découpage si max 3h, Repli horaire]
+PLANNING = {
+    0: [  # Lundi : 11h30-14h30 et 17h00-21h00
+        [[("11:30", "14:30")], [("11:30", "13:30"), ("13:30", "14:30")]],
+        [
+            [("17:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "21:00")],
+            [("16:30", "19:00"), ("19:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "20:00")],
+        ],
+    ],
+    1: [  # Mardi : 11h30-14h30 et 17h00-21h00
+        [[("11:30", "14:30")], [("11:30", "13:30"), ("13:30", "14:30")]],
+        [
+            [("17:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "21:00")],
+            [("16:30", "19:00"), ("19:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "20:00")],
+        ],
+    ],
+    2: [  # Mercredi : 11h30-14h30 + 13h30-21h00 (enchaîné sans chevauchement de 11h30 à 21h00)
+        [[("11:30", "14:30")], [("11:30", "13:30")]],
+        [
+            [("14:30", "17:30")],
+            [("13:30", "16:30")],
+            [("14:30", "17:00")],
+        ],
+        [
+            [("17:30", "21:00")],
+            [("17:30", "19:30"), ("19:30", "21:00")],
+            [("16:30", "19:00"), ("19:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "21:00")],
+        ],
+    ],
+    3: [  # Jeudi : 11h30-14h30 et 17h00-21h00
+        [[("11:30", "14:30")], [("11:30", "13:30"), ("13:30", "14:30")]],
+        [
+            [("17:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "21:00")],
+            [("16:30", "19:00"), ("19:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "20:00")],
+        ],
+    ],
+    4: [  # Vendredi : 11h30-14h30 et 17h00-21h00
+        [[("11:30", "14:30")], [("11:30", "13:30"), ("13:30", "14:30")]],
+        [
+            [("17:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "21:00")],
+            [("16:30", "19:00"), ("19:00", "21:00")],
+            [("17:00", "19:00"), ("19:00", "20:00")],
+            [("17:00", "19:00")],
+        ],
+    ],
+}
+
+# ---------- Secrets ----------
 EMAIL = os.environ["AFF_EMAIL"].strip()
 UGA_USER = os.environ.get("UGA_USER")
 UGA_PASS = os.environ.get("UGA_PASS")
-TG_TOKEN = os.environ.get("TG_TOKEN")             # Optionnel
-TG_CHAT = os.environ.get("TG_CHAT")               # Optionnel
+TG_TOKEN = os.environ.get("TG_TOKEN")
+TG_CHAT = os.environ.get("TG_CHAT")
 
 PARIS = ZoneInfo("Europe/Paris")
 
@@ -88,118 +144,262 @@ def trouver_salles(page, jour):
 
 
 def ordre_salles(salles):
-    """1. RDC Sud n°4 -> 2. Autres RDC Sud -> 3. N'importe quelle autre salle dispo."""
+    """
+    Ordre de priorité :
+    1. RDC Sud n°4
+    2. Autres salles RDC Sud
+    3. Salles Nord (Étage Nord, RDC Nord, etc.)
+    4. N'importe quelle autre salle disponible
+    """
     ordre = []
     # 1. Salle prioritaire (RDC Sud n°4)
     for voulu in SALLES:
-        ordre += [s for s in salles if normaliser(s[0]) == normaliser(voulu)]
+        ordre += [s for s in salles if normaliser(s[0]) == normaliser(voulu) and s not in ordre]
     # 2. Autres salles RDC Sud
-    ordre += [s for s in salles
-              if normaliser(s[0]).startswith(normaliser(SECOURS)) and s not in ordre]
-    # 3. Toutes les autres salles (Étage Nord, etc.) en dernier recours
+    ordre += [
+        s for s in salles
+        if normaliser(SECOURS_SUD) in normaliser(s[0]) and s not in ordre
+    ]
+    # 3. Salles Nord
+    ordre += [
+        s for s in salles
+        if normaliser(SECOURS_NORD) in normaliser(s[0]) and s not in ordre
+    ]
+    # 4. Toutes les autres salles en dernier recours
     ordre += [s for s in salles if s not in ordre]
     return ordre
 
 
-def confirmer_mail(page):
-    """Se connecte au webmail UGA, ouvre le mail Affluences et valide la réservation."""
+def est_deja_reserve_par_utilisateur(txt_err):
+    """Détecte si l'utilisateur a déjà une réservation active sur ce créneau."""
+    txt = txt_err.lower()
+    motifs_perso = (
+        "vous avez déjà",
+        "vous avez deja",
+        "already have",
+        "user already",
+        "email already",
+        "quota",
+        "limite de réservation",
+        "limite de reservation",
+        "maximum de réservations",
+        "maximum de reservations",
+    )
+    return any(m in txt for m in motifs_perso)
+
+
+def connecter_webmail(mail_page):
+    """Ouvre et connecte la session Webmail UGA une seule fois."""
     if not (UGA_USER and UGA_PASS):
         log("Identifiants UGA absents dans les secrets GitHub.")
         return False
+    try:
+        log("Connexion au webmail UGA...")
+        mail_page.goto("https://webmail.etu.univ-grenoble-alpes.fr", wait_until="domcontentloaded")
+        if mail_page.locator("#username").count() > 0:
+            mail_page.fill("#username", UGA_USER)
+            mail_page.fill("#password", UGA_PASS)
+            mail_page.click("#submitBtn")
+            mail_page.wait_for_timeout(5000)
+        return True
+    except Exception as e:
+        log(f"Erreur connexion webmail : {e}")
+        return False
 
-    log("Connexion au webmail UGA...")
-    page.goto("https://webmail.etu.univ-grenoble-alpes.fr", wait_until="domcontentloaded")
-    page.fill("#username", UGA_USER)
-    page.fill("#password", UGA_PASS)
-    page.click("#submitBtn")
-    page.wait_for_timeout(5000)
 
-    for essai in range(1, 7):
-        log(f"Recherche du mail Affluences (essai {essai}/6)...")
-        page.wait_for_timeout(10000)
+def confirmer_mail(nav, mail_page, liens_deja_valides):
+    """Cherche le nouveau mail Affluences non encore validé et clique sur le lien."""
+    if not (UGA_USER and UGA_PASS):
+        return False
 
-        mails = page.get_by_text("Confirmez votre réservation : BU Joseph-Fourier")
-        if mails.count() == 0:
-            page.reload(wait_until="domcontentloaded")
+    for essai in range(1, 8):
+        log(f"Recherche du mail Affluences (essai {essai}/7)...")
+        mail_page.wait_for_timeout(8000)
+
+        try:
+            mail_page.reload(wait_until="domcontentloaded")
+            mail_page.wait_for_timeout(3500)
+        except Exception:
+            pass
+
+        mails = mail_page.get_by_text("Confirmez votre réservation : BU Joseph-Fourier")
+        nb_mails = mails.count()
+        if nb_mails == 0:
             continue
 
-        log("Mail trouvé, ouverture...")
-        mails.first.click()
-        page.wait_for_timeout(4000)
+        # On parcourt les mails trouvés (du plus récent au plus ancien) pour trouver un lien inédit
+        lien_trouve = None
+        for idx in range(min(nb_mails, 4)):
+            try:
+                mails.nth(idx).click()
+                mail_page.wait_for_timeout(3000)
+            except Exception:
+                continue
 
-        lien = None
-        for cadre in page.frames:
-            btn = cadre.locator("a", has_text="Confirmer ma réservation")
-            if btn.count() > 0:
-                lien = btn.first.get_attribute("href")
+            for cadre in mail_page.frames:
+                btns = cadre.locator("a", has_text="Confirmer ma réservation")
+                # On inspecte du dernier au premier au cas où Zimbra affiche une conversation groupée
+                for b_idx in range(btns.count() - 1, -1, -1):
+                    href = btns.nth(b_idx).get_attribute("href")
+                    if href and href not in liens_deja_valides:
+                        lien_trouve = href
+                        break
+                if lien_trouve:
+                    break
+            if lien_trouve:
                 break
 
-        if lien:
-            log("Lien de confirmation extrait ! Validation en cours...")
-            page.goto(lien, wait_until="networkidle")
-            page.wait_for_timeout(3000)
+        if lien_trouve:
+            log(f"Nouveau lien de confirmation extrait ! Validation en cours...")
+            liens_deja_valides.add(lien_trouve)
+            confirm_page = nav.new_page(locale="fr-FR")
+            try:
+                confirm_page.goto(lien_trouve, wait_until="networkidle", timeout=20000)
+                confirm_page.wait_for_timeout(2500)
+            finally:
+                confirm_page.close()
             return True
 
-    log("❌ Échec : le mail de confirmation n'a pas été trouvé à temps.")
+    log("❌ Échec : aucun nouveau mail de confirmation trouvé à temps.")
     return False
+
+
+def reserver_sous_creneau(aff_page, nav, mail_page, jour_txt, debut, fin, candidates, liens_deja_valides, salle_preferee=None):
+    """
+    Tente de réserver (debut -> fin) en privilégiant la salle_preferee (pour garder la même salle
+    sur deux blocs consécutifs), puis en suivant l'ordre RDC Sud n°4 -> RDC Sud -> Nord -> Autres.
+    """
+    liste_essai = list(candidates)
+    if salle_preferee:
+        liste_essai.sort(key=lambda s: 0 if s[0] == salle_preferee else 1)
+
+    for nom, rid in liste_essai:
+        r = api(aff_page, "POST", f"https://reservation.affluences.com/api/reserve/{rid}", {
+            "email": EMAIL,
+            "date": jour_txt,
+            "start_time": debut,
+            "end_time": fin,
+            "person_count": NB_PERSONNES,
+            "note": "",
+        })
+        log(f"[{debut}-{fin}] {nom} (id {rid}) -> {r['status']} {r['text'][:180]}")
+
+        if r["status"] in (200, 201):
+            log(f"✅ Réservation posée : {nom} ({debut}-{fin}). Validation mail...")
+            ok_mail = confirmer_mail(nav, mail_page, liens_deja_valides)
+            return ("OK" if ok_mail else "MAIL_KO", nom)
+
+        if est_deja_reserve_par_utilisateur(r["text"]):
+            log(f"ℹ️ Créneau {debut}-{fin} déjà réservé par ton compte.")
+            return ("DEJA_FAIT", nom)
+
+    return ("ECHEC", None)
+
+
+def reserver_bloc_intelligent(aff_page, nav, mail_page, jour_txt, variantes, candidates, liens_deja_valides):
+    """
+    Pour un grand bloc horaire (ex: 17h-21h) :
+    Teste d'abord sur la meilleure salle (RDC Sud n°4) le créneau complet (17h-21h),
+    et si Affluences refuse la durée de 4h, découpe immédiatement en 2x2h (17h-19h + 19h-21h)
+    sur cette MÊME salle prioritaire avant de passer aux salles de secours !
+    """
+    resultats = []
+
+    # 1. On essaie d'abord de garder la même salle de bout en bout (salle par salle dans l'ordre de priorité)
+    for nom_salle, rid_salle in candidates:
+        salle_unique = [(nom_salle, rid_salle)]
+        for variante in variantes:
+            succes_variante = True
+            sous_resultats = []
+            for idx, (debut, fin) in enumerate(variante):
+                # Pour le 1er sous-créneau, on exige cette salle; pour le 2e, on privilégie cette salle puis les secours
+                cibles = salle_unique if idx == 0 else candidates
+                statut, salle_retenue = reserver_sous_creneau(
+                    aff_page, nav, mail_page, jour_txt, debut, fin, cibles, liens_deja_valides, salle_preferee=nom_salle
+                )
+                if statut in ("OK", "MAIL_KO", "DEJA_FAIT"):
+                    sous_resultats.append((debut, fin, salle_retenue, statut))
+                else:
+                    succes_variante = False
+                    break
+
+            if succes_variante and sous_resultats:
+                return sous_resultats
+            elif sous_resultats:
+                # Si la 1re moitié de la variante a réussi sur cette salle mais que la 2e moitié a échoué partout
+                resultats.extend(sous_resultats)
+                return resultats
+
+    return resultats
 
 
 def main():
     jour = date_cible()
-    if jour.weekday() >= 5:
+    num_jour = jour.weekday()
+    if num_jour >= 5:
         log(f"{jour} est un week-end, rien à faire.")
         return
+
     jour_txt = jour.isoformat()
-    log(f"Objectif : {jour_txt} de {HEURE_DEBUT} à {HEURE_FIN}")
+    blocs_du_jour = PLANNING.get(num_jour, [])
+    log(f"=== Objectif pour le {jour_txt} (jour {num_jour}) : {len(blocs_du_jour)} grands créneaux à couvrir ===")
+
+    bilan_succes = []
+    bilan_deja_fait = []
+    bilan_echecs = []
+    liens_deja_valides = set()
 
     with sync_playwright() as p:
         nav = p.chromium.launch()
-        page = nav.new_page(locale="fr-FR")
+        aff_page = nav.new_page(locale="fr-FR")
+        mail_page = nav.new_page(locale="fr-FR")
 
-        # 1. Réservation sur Affluences
-        page.goto(f"https://affluences.com/fr/sites/{SITE_SLUG}/reservation?type={TYPE_ID}&date={jour_txt}",
-                  wait_until="networkidle")
+        # Connexion initiale au webmail UGA pour être prêt à valider instantanément
+        connecter_webmail(mail_page)
 
-        candidates = ordre_salles(trouver_salles(page, jour_txt))
-        log("Ordre d'essai : " + ", ".join(n for n, _ in candidates))
-        reservee = None
-        for nom, rid in candidates:
-            r = api(page, "POST", f"https://reservation.affluences.com/api/reserve/{rid}", {
-                "email": EMAIL,
-                "date": jour_txt,
-                "start_time": HEURE_DEBUT,
-                "end_time": HEURE_FIN,
-                "person_count": NB_PERSONNES,
-                "note": "",
-            })
-            log(f"{nom} (id {rid}) -> {r['status']} {r['text'][:200]}")
-            if r["status"] in (200, 201):
-                reservee = nom
-                break
+        # Ouverture de la page Affluences
+        aff_page.goto(
+            f"https://affluences.com/fr/sites/{SITE_SLUG}/reservation?type={TYPE_ID}&date={jour_txt}",
+            wait_until="networkidle",
+        )
 
-            # Si le 1er passage du matin a déjà réservé une salle, on s'arrête proprement
-            txt_err = r["text"].lower()
-            if any(mot in txt_err for mot in ("already", "limite", "quota", "maximum", "déjà", "deja")):
-                log("Une réservation est déjà active pour ce jour/créneau. Rien à faire !")
-                nav.close()
-                return
+        candidates = ordre_salles(trouver_salles(aff_page, jour_txt))
+        log("Ordre de priorité : " + ", ".join(n for n, _ in candidates))
 
-        if not reservee:
-            telegram(f"❌ Réservation BU ratée pour le {jour_txt}. Toutes les salles sont prises.")
-            nav.close()
-            sys.exit(1)
+        for num_bloc, variantes in enumerate(blocs_du_jour, start=1):
+            desc_cible = " + ".join(f"{d}-{f}" for d, f in variantes[0])
+            log(f"--- Traitement du bloc {num_bloc}/{len(blocs_du_jour)} (cible : {desc_cible}) ---")
 
-        log(f"Réservation demandée sur Affluences ✅ : {reservee}")
+            res_bloc = reserver_bloc_intelligent(
+                aff_page, nav, mail_page, jour_txt, variantes, candidates, liens_deja_valides
+            )
 
-        # 2. Validation automatique via le Webmail UGA
-        succes_validation = confirmer_mail(page)
+            if not res_bloc:
+                bilan_echecs.append(desc_cible)
+            else:
+                for debut, fin, salle, statut in res_bloc:
+                    if statut == "OK":
+                        bilan_succes.append(f"✅ {salle} ({debut}-{fin})")
+                    elif statut == "MAIL_KO":
+                        bilan_echecs.append(f"⚠️ {salle} ({debut}-{fin} : mail non validé)")
+                    elif statut == "DEJA_FAIT":
+                        bilan_deja_fait.append(f"☑️ Déjà actif ({debut}-{fin})")
+
         nav.close()
 
-    if succes_validation:
-        log(f"🎉 SUCCÈS TOTAL : {reservee} réservée et confirmée pour le {jour_txt} !")
-        telegram(f"🎉 SUCCÈS : {reservee} réservée et confirmée automatiquement pour le {jour_txt} ({HEURE_DEBUT}-{HEURE_FIN}) !")
+    # ---------- Résumé final & Notification Telegram ----------
+    if bilan_succes:
+        msg = f"🎉 Réservations BU confirmées pour le {jour_txt} :\n" + "\n".join(bilan_succes)
+        if bilan_echecs:
+            msg += "\n\n❌ Créneaux incomplets :\n" + "\n".join(bilan_echecs)
+        log(msg)
+        telegram(msg)
+    elif bilan_deja_fait and not bilan_echecs:
+        log(f"Toutes les réservations du {jour_txt} étaient déjà actives. Rien à signaler.")
     else:
-        telegram(f"⚠️ {reservee} demandée pour le {jour_txt}, mais la validation automatique du mail a échoué.")
+        msg = f"❌ Échec sur les réservations BU du {jour_txt} :\n" + "\n".join(bilan_echecs)
+        log(msg)
+        telegram(msg)
         sys.exit(1)
 
 
