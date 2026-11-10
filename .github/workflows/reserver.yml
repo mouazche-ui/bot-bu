@@ -2,10 +2,12 @@ name: Réservation BU
 
 on:
   schedule:
-    # 1er passage tôt : 5h05 UTC = 7h05 (été) / 6h05 (hiver), du lundi au vendredi
+    # Heure d'été (UTC+2) : 7h05 et 7h45 (heure de Paris)
     - cron: "5 5 * * 1-5"
-    # 2e passage de sécurité (si GitHub a raté le 1er ou si Affluences ouvre à 7h30) : 5h45 UTC = 7h45 (été) / 6h45 (hiver)
     - cron: "45 5 * * 1-5"
+    # Heure d'hiver (UTC+1) : 7h05 et 7h45 (heure de Paris)
+    - cron: "5 6 * * 1-5"
+    - cron: "45 6 * * 1-5"
   workflow_dispatch:
     inputs:
       date:
@@ -15,7 +17,7 @@ on:
 jobs:
   reserver:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
