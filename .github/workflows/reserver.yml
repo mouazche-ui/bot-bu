@@ -11,20 +11,20 @@ on:
   workflow_dispatch:
     inputs:
       date:
-        description: "Date à tester (AAAA-MM-JJ). Vide = dans 14 jours"
+        description: "Vide = J+14 | 'rattrapage' = tous les jours d'aujourd'hui à J+14 | ou AAAA-MM-JJ"
         required: false
 
 jobs:
   reserver:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
       - run: pip install playwright && python -m playwright install --with-deps chromium
-      - run: python reserver.py ${{ github.event.inputs.date }}
+      - run: python reserver.py "${{ github.event.inputs.date }}"
         env:
           AFF_EMAIL: ${{ secrets.AFF_EMAIL }}
           UGA_USER: ${{ secrets.UGA_USER }}
