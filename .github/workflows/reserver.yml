@@ -17,13 +17,18 @@ on:
 jobs:
   reserver:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - run: pip install playwright && python -m playwright install --with-deps chromium
+      - name: Cache Playwright
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-v1
+      - run: pip install requests playwright && python -m playwright install chromium
       - run: python reserver.py "${{ github.event.inputs.date }}"
         env:
           AFF_EMAIL: ${{ secrets.AFF_EMAIL }}
