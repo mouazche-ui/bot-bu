@@ -1,0 +1,17 @@
+[
+  {
+    "email": "mouaz.cherifi@etu.univ-grenoble-alpes.fr",
+    "username": "IDENTIFIANT_AGALAN_MOUAZ",
+    "password": "MOT_DE_PASSE_MOUAZ"
+  },
+  {
+    "email": "habib.larbi@etu.univ-grenoble-alpes.fr",
+    "username": "IDENTIFIANT_AGALAN_HABIB",
+    "password": "MOT_DE_PASSE_HABIB"
+  },
+  {
+    "email": "samy.lahroussi@etu.univ-grenoble-alpes.fr",
+    "username": "IDENTIFIANT_AGALAN_SAMY",
+    "password": "MOT_DE_PASSE_SAMY"
+  }
+]
