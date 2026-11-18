@@ -228,5 +228,11 @@ class AsyncTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(j.entries[cancelled.key].status, "cancelled")
 
 
+class OpeningDayTests(unittest.TestCase):
+    def test_preparation_before_midnight_uses_opening_day(self):
+        opening_day = date(2026, 11, 19)
+        self.assertEqual(bot.date_selection("", 14, opening_day), ["2026-12-03"])
+
+
 if __name__ == "__main__":
     unittest.main()
