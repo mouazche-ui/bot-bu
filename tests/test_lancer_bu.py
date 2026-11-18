@@ -75,3 +75,25 @@ class BodyTests(unittest.TestCase):
     def test_html_summary_is_title_only(self):
         result = launch.response_summary(None, '<html><title>Access denied</title><script>SECRET</script></html>')
         self.assertEqual(result, "Access denied")
+
+    def test_only_the_explicitly_refused_booking_is_repaired(self):
+        stamp = launch.datetime.fromisoformat("2026-11-18T21:36:06+01:00").timestamp()
+        with tempfile.TemporaryDirectory() as directory:
+            journal = bot.Journal(Path(directory) / "journal.json")
+            refused = bot.Booking(ACCOUNT.email, "2026-11-19", 900, 960, "RDC Sud n°8", "uncertain", stamp)
+            other = bot.Booking(ACCOUNT.email, "2026-11-20", 900, 960, "RDC Sud n°8", "uncertain", stamp)
+            journal.put(refused, persist=False)
+            journal.put(other, persist=False)
+            with patch.object(bot, "log"):
+                self.assertTrue(launch.repair_known_refusal(journal))
+            self.assertEqual(refused.status, "rejected")
+            self.assertEqual(other.status, "uncertain")
+            self.assertFalse(launch.repair_known_refusal(journal))
+
+    def test_similar_uncertainty_from_another_time_is_preserved(self):
+        with tempfile.TemporaryDirectory() as directory:
+            journal = bot.Journal(Path(directory) / "journal.json")
+            booking = bot.Booking(ACCOUNT.email, "2026-11-19", 900, 960, "RDC Sud n°8", "uncertain", 1)
+            journal.put(booking, persist=False)
+            self.assertFalse(launch.repair_known_refusal(journal))
+            self.assertEqual(booking.status, "uncertain")
