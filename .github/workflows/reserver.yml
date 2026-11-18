@@ -102,7 +102,7 @@ jobs:
             args+=(--diagnostic)
           fi
 
-          python correctif_mails.py "${args[@]}"
+          python lancer_bu.py "${args[@]}"
 
       - name: Sauvegarder le journal
         if: always() && (github.event_name == 'schedule' || inputs.mode == 'execute')
