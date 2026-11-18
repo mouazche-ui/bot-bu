@@ -2,12 +2,22 @@ name: Réservation BU
 
 on:
   schedule:
-    # Heure d'été (UTC+2) : 7h05 et 7h45 (heure de Paris)
-    - cron: "5 5 * * 1-5"
-    - cron: "45 5 * * 1-5"
-    # Heure d'hiver (UTC+1) : 7h05 et 7h45 (heure de Paris)
+    # 1. Ouverture Minuit Paris (Heure d'hiver UTC+1 : 23:00 / Heure d'été UTC+2 : 22:00)
+    - cron: "0 23 * * *"
+    - cron: "5 23 * * *"
+    - cron: "0 22 * * *"
+    - cron: "5 22 * * *"
+    
+    # 2. Ouverture 07h00 Paris (Heure d'hiver UTC+1 : 06:00 / Heure d'été UTC+2 : 05:00)
+    - cron: "0 6 * * 1-5"
     - cron: "5 6 * * 1-5"
-    - cron: "45 6 * * 1-5"
+    - cron: "0 5 * * 1-5"
+    - cron: "5 5 * * 1-5"
+
+    # 3. Passages de sécurité en journée (15h00 et 17h00 Paris)
+    - cron: "0 14 * * 1-5"
+    - cron: "0 16 * * 1-5"
+
   workflow_dispatch:
     inputs:
       date:
