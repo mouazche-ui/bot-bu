@@ -1,11 +1,5 @@
 """
-Réservation automatique Affluences - BU Joseph-Fourier & Validation UGA Ultra-Rapide
-Architecture Haute Performance :
-1. Requêtes Affluences 100% HTTP Keep-Alive (Session) + Fetch parallèle multi-jours (0s de chargement navigateur).
-2. Pré-filtrage intelligent des créneaux disponibles en RAM.
-3. Pipelining : pose toutes les réservations en rafale avant de valider tous les mails en lot.
-4. Validation mail par protocole IMAP direct (0.1s) avec fallback automatique Webmail Playwright.
-5. Alternance parfaite sur 3 comptes universitaires distincts (11h30 -> 21h00 non-stop).
+Réservation automatique Affluences - BU Joseph-Fourier & Validation Multi-Comptes UGA
 """
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
@@ -60,28 +54,13 @@ PLANNING = {
     4: PLANNING_CONTINU,  # Vendredi
 }
 
-# ---------- Blocs du mode RATTRAPAGE (~13h30 à 21h00) ----------
-BLOCS_RATTRAPAGE_SOIR = [
-    [
-        [("14:30", "17:30")],
-        [("14:00", "17:00")],
-    ],
-    [
-        [("17:30", "19:30")],
-        [("17:00", "19:00")],
-    ],
-    [
-        [("19:30", "21:00")],
-        [("19:00", "21:00")],
-    ],
-]
-
-BLOCS_RATTRAPAGE_MERCREDI = BLOCS_RATTRAPAGE_SOIR
+# ---------- Blocs du mode RATTRAPAGE (11h30 à 21h00) ----------
+BLOCS_RATTRAPAGE = PLANNING_CONTINU
 
 # ---------- Secrets ----------
-RAW_EMAIL = os.environ["AFF_EMAIL"].strip()
-UGA_USER = os.environ.get("UGA_USER", "").strip()
-UGA_PASS = os.environ.get("UGA_PASS", "").strip()
+RAW_EMAIL = os.environ.get("AFF_EMAIL", "").strip()
+UGA_USERS = [u.strip() for u in os.environ.get("UGA_USER", "").split(",") if u.strip()]
+UGA_PASSES = [p.strip() for p in os.environ.get("UGA_PASS", "").split(",") if p.strip()]
 TG_TOKEN = os.environ.get("TG_TOKEN", "").strip()
 TG_CHAT = os.environ.get("TG_CHAT", "").strip()
 
@@ -115,11 +94,11 @@ def telegram(msg):
 
 
 def generer_pool_emails(raw_email):
-    """Génère un pool en alternant parfaitement les 3 comptes principaux puis leurs alias."""
+    """Génère un pool en alternant les 3 comptes principaux puis leurs alias."""
     bases = [e.strip() for e in raw_email.split(",") if e.strip()]
     pool = []
 
-    # 1. Injection des 3 comptes principaux
+    # 1. Injection des comptes principaux dans l'ordre
     for b in bases:
         if b not in pool:
             pool.append(b)
@@ -389,70 +368,60 @@ def valider_lien_affluences(url):
         return False
 
 
-def extraire_liens_via_imap(nb_attendus, timeout_sec=35):
-    if not (UGA_USER and UGA_PASS):
-        return None
-
+def extraire_liens_d_un_compte(user, password, nb_attendus):
+    """Connexion IMAP sur UN compte spécifique pour extraire tous les liens de confirmation."""
     conn = None
     for host in IMAP_HOSTS:
         try:
-            conn = imaplib.IMAP4_SSL(host, 993, timeout=6)
-            conn.login(UGA_USER, UGA_PASS)
-            log(f"⚡ Connecté en IMAP direct sur {host} !")
+            conn = imaplib.IMAP4_SSL(host, 993, timeout=5)
+            conn.login(user, password)
+            log(f"⚡ Connecté en IMAP direct sur {user} !")
             break
         except Exception:
             conn = None
 
     if not conn:
-        return None
+        log(f"⚠️ Échec connexion IMAP pour {user}")
+        return []
 
     liens_trouves = []
-    vus = set()
-    debut_t = time.time()
-
     try:
-        while time.time() - debut_t < timeout_sec and len(liens_trouves) < nb_attendus:
-            conn.select("INBOX")
-            typ, data = conn.search(None, '(UNSEEN)')
-            ids = data[0].split() if (typ == "OK" and data and data[0]) else []
-            if not ids:
-                typ, data = conn.search(None, 'ALL')
-                ids = data[0].split()[-15:] if (typ == "OK" and data and data[0]) else []
+        conn.select("INBOX")
+        typ, data = conn.search(None, '(UNSEEN)')
+        ids = data[0].split() if (typ == "OK" and data and data[0]) else []
+        if not ids:
+            typ, data = conn.search(None, 'ALL')
+            ids = data[0].split()[-20:] if (typ == "OK" and data and data[0]) else []
 
-            for num in reversed(ids[-20:]):
-                typ, msg_data = conn.fetch(num, "(BODY.PEEK[])")
-                if typ != "OK" or not msg_data:
-                    continue
-                raw_bytes = msg_data[0][1]
-                msg = email.message_from_bytes(raw_bytes)
-                sujet = str(email.header.make_header(email.header.decode_header(msg.get("Subject", ""))))
-                if "Affluences" not in sujet and "Joseph-Fourier" not in sujet and "réservation" not in sujet.lower():
-                    continue
+        for num in reversed(ids[-25:]):
+            typ, msg_data = conn.fetch(num, "(BODY.PEEK[])")
+            if typ != "OK" or not msg_data:
+                continue
+            raw_bytes = msg_data[0][1]
+            msg = email.message_from_bytes(raw_bytes)
 
-                corps = ""
-                if msg.is_multipart():
-                    for part in msg.walk():
-                        if part.get_content_type() in ("text/html", "text/plain"):
-                            payload = part.get_payload(decode=True)
-                            if payload:
-                                corps += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
-                else:
-                    payload = msg.get_payload(decode=True)
-                    if payload:
-                        corps = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
+            corps = ""
+            if msg.is_multipart():
+                for part in msg.walk():
+                    if part.get_content_type() in ("text/html", "text/plain"):
+                        payload = part.get_payload(decode=True)
+                        if payload:
+                            corps += payload.decode(part.get_content_charset() or "utf-8", errors="ignore")
+            else:
+                payload = msg.get_payload(decode=True)
+                if payload:
+                    corps = payload.decode(msg.get_content_charset() or "utf-8", errors="ignore")
 
-                for m in re.finditer(r'https?://[^\s"\'<>]+affluences\.com[^\s"\'<>]+', corps):
-                    u_clean = m.group(0).replace("&amp;", "&")
-                    if any(k in u_clean.lower() for k in ("confirm", "valid", "token", "reserv")) and u_clean not in vus:
-                        vus.add(u_clean)
-                        liens_trouves.append(u_clean)
-                        conn.store(num, "+FLAGS", "\\Seen")
+            for m in re.finditer(r'https?://[^\s"\'<>]+affluences\.com[^\s"\'<>]+', corps):
+                u_clean = m.group(0).replace("&amp;", "&")
+                if any(k in u_clean.lower() for k in ("confirm", "valid", "token", "reserv")):
+                    liens_trouves.append(u_clean)
+                    conn.store(num, "+FLAGS", "\\Seen")
 
             if len(liens_trouves) >= nb_attendus:
                 break
-            time.sleep(1.2)
     except Exception as e:
-        log(f"⚠️ Lecture IMAP interrompue : {e}")
+        log(f"⚠️ Erreur IMAP {user} : {e}")
     finally:
         try:
             conn.logout()
@@ -465,117 +434,53 @@ def extraire_liens_via_imap(nb_attendus, timeout_sec=35):
 def valider_lot_mails(nb_attendus):
     if nb_attendus <= 0:
         return 0
-    if not (UGA_USER and UGA_PASS):
-        log("⚠️ Identifiants UGA absents.")
+
+    pairs = list(zip(UGA_USERS, UGA_PASSES))
+    if not pairs:
+        log("⚠️ Aucun identifiant UGA renseigné dans UGA_USER/UGA_PASS.")
         return 0
 
-    log(f"⚡ Validation groupée de {nb_attendus} réservation(s) en cours...")
-    liens = extraire_liens_via_imap(nb_attendus, timeout_sec=28)
+    log(f"⚡ Validation groupée de {nb_attendus} réservation(s) sur {len(pairs)} compte(s)...")
 
-    from playwright.sync_api import sync_playwright
-
-    if liens is not None and len(liens) > 0:
-        log(f"⚡ {len(liens)} lien(s) extrait(s) par IMAP ! Validation...")
-        nb_ok = 0
-        liens_js = []
+    liens_globaux = []
+    for user, pwd in pairs:
+        liens = extraire_liens_d_un_compte(user, pwd, nb_attendus)
         for l in liens:
-            if valider_lien_affluences(l):
-                nb_ok += 1
-            else:
-                liens_js.append(l)
+            if l not in liens_globaux:
+                liens_globaux.append(l)
 
-        if liens_js:
-            with sync_playwright() as p:
-                nav = p.chromium.launch()
-                ctx = nav.new_context(locale="fr-FR")
-                pages = []
-                for l in liens_js:
-                    pg = ctx.new_page()
-                    try:
-                        pg.goto(l, wait_until="domcontentloaded", timeout=12000)
-                        pages.append(pg)
-                        nb_ok += 1
-                    except Exception as e:
-                        log(f"⚠️ Erreur ouverture lien {l[:50]} : {e}")
-                if pages:
-                    pages[0].wait_for_timeout(2500)
-                nav.close()
-        return nb_ok
+    if not liens_globaux:
+        log("⚠️ Aucun lien de confirmation trouvé dans les boîtes IMAP.")
+        return 0
 
-    log("🔄 Passage par le Webmail UGA rapide...")
-    nb_valides = 0
-    liens_vus = set()
+    log(f"⚡ {len(liens_globaux)} lien(s) de confirmation extrait(s) au total ! Activation...")
+    nb_ok = 0
+    liens_js = []
+    for l in liens_globaux:
+        if valider_lien_affluences(l):
+            nb_ok += 1
+        else:
+            liens_js.append(l)
 
-    with sync_playwright() as p:
-        nav = p.chromium.launch()
-        ctx = nav.new_context(locale="fr-FR")
-        mail_page = ctx.new_page()
-
-        mail_page.goto("https://webmail.etu.univ-grenoble-alpes.fr", wait_until="domcontentloaded")
-        mail_page.fill("#username", UGA_USER)
-        mail_page.fill("#password", UGA_PASS)
-        mail_page.click("#submitBtn")
-        mail_page.wait_for_timeout(3500)
-
-        for essai in range(1, 9):
-            if nb_valides >= nb_attendus:
-                break
-
-            try:
-                btn_getmail = mail_page.locator("#zb__App__tab_Mail, #zb__zbText__REFRESH, [id*='CHECK_MAIL']").first
-                if btn_getmail.count() > 0:
-                    btn_getmail.click()
-                    mail_page.wait_for_timeout(1800)
-                else:
-                    mail_page.reload(wait_until="domcontentloaded")
-                    mail_page.wait_for_timeout(2200)
-            except Exception:
-                pass
-
-            mails = mail_page.get_by_text("Confirmez votre réservation : BU Joseph-Fourier")
-            nb_m = mails.count()
-            if nb_m == 0:
-                mail_page.wait_for_timeout(2000)
-                continue
-
-            nouveaux_liens = []
-            for idx in range(min(nb_m, nb_attendus + 4)):
+    if liens_js:
+        from playwright.sync_api import sync_playwright
+        with sync_playwright() as p:
+            nav = p.chromium.launch()
+            ctx = nav.new_context(locale="fr-FR")
+            pages = []
+            for l in liens_js:
+                pg = ctx.new_page()
                 try:
-                    mails.nth(idx).click()
-                    mail_page.wait_for_timeout(1200)
-                except Exception:
-                    continue
+                    pg.goto(l, wait_until="domcontentloaded", timeout=12000)
+                    pages.append(pg)
+                    nb_ok += 1
+                except Exception as e:
+                    log(f"⚠️ Erreur ouverture lien {l[:50]} : {e}")
+            if pages:
+                pages[0].wait_for_timeout(2500)
+            nav.close()
 
-                for cadre in mail_page.frames:
-                    btns = cadre.locator("a", has_text="Confirmer ma réservation")
-                    for b_idx in range(btns.count() - 1, -1, -1):
-                        href = btns.nth(b_idx).get_attribute("href")
-                        if href and href not in liens_vus:
-                            liens_vus.add(href)
-                            nouveaux_liens.append(href)
-
-            if nouveaux_liens:
-                onglets = []
-                for href in nouveaux_liens:
-                    pg = ctx.new_page()
-                    try:
-                        pg.goto(href, wait_until="domcontentloaded", timeout=12000)
-                        onglets.append(pg)
-                        nb_valides += 1
-                        log(f"⚡ Lien validé ({nb_valides}/{nb_attendus})")
-                    except Exception:
-                        pass
-                if onglets:
-                    onglets[0].wait_for_timeout(2200)
-                    for pg in onglets:
-                        pg.close()
-
-            if nb_valides < nb_attendus:
-                mail_page.wait_for_timeout(2000)
-
-        nav.close()
-
-    return nb_valides
+    return nb_ok
 
 
 def main():
@@ -606,11 +511,7 @@ def main():
             continue
 
         candidates = ordre_salles(data_salles)
-        blocs_du_jour = (
-            (BLOCS_RATTRAPAGE_MERCREDI if num_jour == 2 else BLOCS_RATTRAPAGE_SOIR)
-            if mode_rattrapage
-            else PLANNING.get(num_jour, [])
-        )
+        blocs_du_jour = BLOCS_RATTRAPAGE if mode_rattrapage else PLANNING.get(num_jour, [])
         minutes_par_email = {e: 0 for e in pool_emails}
 
         for variantes in blocs_du_jour:
