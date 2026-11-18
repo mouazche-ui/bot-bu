@@ -581,13 +581,16 @@ async def run(args):
             mailboxes = [Mailbox(a, i, browser) for i, a in enumerate(accounts, 1)]
             # Barrière: aucune réservation tant que TOUTES les boîtes ne sont pas lisibles.
             await asyncio.gather(*(m.login() for m in mailboxes))
-            while target and now() < target:
-                await asyncio.sleep(min(20, max(0.01, (target - now()).total_seconds())))
-            days = date_selection(args.date, horizon)
+            days = date_selection(args.date, horizon,
+                                  today=target.date() if target else now().date())
             if not days:
                 log("Jour cible hors lundi–vendredi")
                 return 0
             await reconcile(mailboxes, journal, days, browser, args.execute)
+            if target and now() < target:
+                log(f"Historique chargé; attente de l'ouverture {target:%Y-%m-%d %H:%M:%S} Paris")
+            while target and now() < target:
+                await asyncio.sleep(min(20, max(0.01, (target - now()).total_seconds())))
             if len(accounts) * QUOTA < end - start:
                 log(f"Capacité: {len(accounts)*QUOTA} min pour {end-start} min demandées. "
                     "La couverture totale nécessite un compte participant supplémentaire ou un horaire plus court.")
