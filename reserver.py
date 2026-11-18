@@ -370,18 +370,37 @@ def valider_lien_affluences(url):
 
 def extraire_liens_d_un_compte(user, password, nb_attendus):
     """Connexion IMAP sur UN compte spécifique pour extraire tous les liens de confirmation."""
+    
+    # Construction des logins potentiels (email complet vs login court)
+    logins_a_tester = []
+    if "@" in user:
+        logins_a_tester.append(user)
+        logins_a_tester.append(user.split("@")[0])
+    else:
+        logins_a_tester.append(f"{user}@etu.univ-grenoble-alpes.fr")
+        logins_a_tester.append(user)
+
+    # Correspondance explicite des emails selon l'utilisateur
+    raw_emails = [e.strip() for e in RAW_EMAIL.split(",") if e.strip()]
+    
     conn = None
-    for host in IMAP_HOSTS:
-        try:
-            conn = imaplib.IMAP4_SSL(host, 993, timeout=5)
-            conn.login(user, password)
-            log(f"⚡ Connecté en IMAP direct sur {user} !")
+    user_connecte = None
+    
+    for login in logins_a_tester:
+        for host in IMAP_HOSTS:
+            try:
+                conn = imaplib.IMAP4_SSL(host, 993, timeout=5)
+                conn.login(login, password)
+                log(f"⚡ Connecté en IMAP direct sur {login} !")
+                user_connecte = login
+                break
+            except Exception:
+                conn = None
+        if conn:
             break
-        except Exception:
-            conn = None
 
     if not conn:
-        log(f"⚠️ Échec connexion IMAP pour {user}")
+        log(f"⚠️ Échec connexion IMAP pour {user} (testés: {logins_a_tester})")
         return []
 
     liens_trouves = []
@@ -391,9 +410,9 @@ def extraire_liens_d_un_compte(user, password, nb_attendus):
         ids = data[0].split() if (typ == "OK" and data and data[0]) else []
         if not ids:
             typ, data = conn.search(None, 'ALL')
-            ids = data[0].split()[-20:] if (typ == "OK" and data and data[0]) else []
+            ids = data[0].split()[-30:] if (typ == "OK" and data and data[0]) else []
 
-        for num in reversed(ids[-25:]):
+        for num in reversed(ids[-30:]):
             typ, msg_data = conn.fetch(num, "(BODY.PEEK[])")
             if typ != "OK" or not msg_data:
                 continue
@@ -421,7 +440,7 @@ def extraire_liens_d_un_compte(user, password, nb_attendus):
             if len(liens_trouves) >= nb_attendus:
                 break
     except Exception as e:
-        log(f"⚠️ Erreur IMAP {user} : {e}")
+        log(f"⚠️ Erreur IMAP {user_connecte} : {e}")
     finally:
         try:
             conn.logout()
