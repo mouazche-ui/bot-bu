@@ -6,6 +6,7 @@ import re
 import sys
 import time
 from html.parser import HTMLParser
+from datetime import datetime
 from urllib.parse import urlsplit
 
 import correctif_mails as mails
@@ -14,8 +15,33 @@ import reserver as bot
 PAGE_URL = "https://affluences.com/fr/sites/bu-joseph-fourier/reservation?type=5249"
 OLD_LOGIN = bot.Mailbox.login
 OLD_SUBMIT = bot.submit
+OLD_JOURNAL_INIT = bot.Journal.__init__
 SESSION = None
 SESSION_LOCK = None
+
+
+def repair_known_refusal(journal):
+    """Répare uniquement la demande explicitement refusée dans le run 44392416071."""
+    begin = datetime.fromisoformat("2026-11-18T21:35:00+01:00").timestamp()
+    finish = datetime.fromisoformat("2026-11-18T21:36:21+01:00").timestamp()
+    candidates = [b for b in journal.entries.values()
+                  if b.status == "uncertain" and b.day == "2026-11-19"
+                  and b.start == 900 and b.end == 960
+                  and bot.norm(b.room) == bot.norm("RDC Sud n°8")
+                  and begin <= b.updated <= finish]
+    if len(candidates) == 1:
+        booking = candidates[0]
+        booking.status, booking.updated = "rejected", time.time()
+        journal.put(booking)
+        bot.log("Ancien refus HTTP 403 reclassé: 2026-11-19 15:00–16:00 RDC Sud n°8")
+        return True
+    return False
+
+
+def journal_init(self, path):
+    OLD_JOURNAL_INIT(self, path)
+    if "--execute" in sys.argv:
+        repair_known_refusal(self)
 
 
 def response_summary(payload, text=""):
@@ -150,6 +176,7 @@ def install():
     bot.Mailbox.login = browser_login
     bot.submit = browser_submit
     bot.notify = notify
+    bot.Journal.__init__ = journal_init
 
 
 if __name__ == "__main__":
