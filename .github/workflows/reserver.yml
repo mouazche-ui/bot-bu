@@ -80,8 +80,16 @@ jobs:
           path: ~/.cache/ms-playwright
           key: chromium-${{ runner.os }}-${{ hashFiles('requirements.txt') }}
 
-      - name: Installer Chromium
-        run: python -m playwright install --with-deps chromium
+      - name: Préparer et vérifier Chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m playwright install chromium
+          probe='from playwright.sync_api import sync_playwright; p=sync_playwright().start(); b=p.chromium.launch(headless=True); b.close(); p.stop()'
+          if ! python -c "$probe"; then
+            python -m playwright install --with-deps chromium
+            python -c "$probe"
+          fi
 
       - name: Réserver ou diagnostiquer
         shell: bash
