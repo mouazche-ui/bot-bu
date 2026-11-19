@@ -2,9 +2,9 @@ name: Réservation BU fiable
 
 on:
   schedule:
-    - cron: "56 23 * * *"
+    - cron: "7 0 * * *"
       timezone: Europe/Paris
-    - cron: "56 6 * * 1-5"
+    - cron: "7 7 * * 1-5"
       timezone: Europe/Paris
     
 
@@ -98,11 +98,6 @@ jobs:
 
           if [[ "$EVENT_NAME" == "schedule" ]]; then
             args+=(--execute)
-            case "$EVENT_SCHEDULE" in
-              "56 23 * * *") args+=(--opening 00:00) ;;
-              "56 6 * * 1-5") args+=(--opening 07:00) ;;
-              *) args=(rattrapage --execute) ;;
-            esac
           elif [[ "$INPUT_MODE" == "execute" ]]; then
             args+=(--execute)
           else
