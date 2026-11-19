@@ -44,7 +44,7 @@ jobs:
       NB_PERSONNES: "3"
       DAYS_AHEAD: "14"
       START: "11:30"
-      END: "21:00"
+      END: "20:30"
       MAIL_WAIT_SECONDS: "120"
       STATE_FILE: state/journal.json
       INPUT_DATE: ${{ inputs.date }}
