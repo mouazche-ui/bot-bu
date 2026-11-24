@@ -1,30 +1,30 @@
 name: Facteur UGA vers Gmail
-
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch:
-
 concurrency:
   group: facteur-uga-gmail
   cancel-in-progress: false
-
 jobs:
   facteur:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 8
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - name: Configuration DNS fiables (Google & Cloudflare) — présent dans la version qui marchait
+        run: |
+          echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" | sudo tee /etc/resolv.conf
       - name: Cache Playwright
         uses: actions/cache@v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-v1
-      - run: pip install requests playwright && python -m playwright install chromium
+      - run: pip install playwright && python -m playwright install chromium
       - run: python facteur.py || true
         env:
           UGA_USER: ${{ secrets.UGA_USER }}
