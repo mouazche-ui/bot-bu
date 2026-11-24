@@ -27,6 +27,8 @@ jobs:
       - run: python facteur.py
         env:
           FACTEUR_DIAGNOSTIC: ${{ inputs.diagnostic && 'true' || 'false' }}
+          FACTEUR_UGA_USER: ${{ secrets.FACTEUR_UGA_USER }}
+          FACTEUR_UGA_PASS: ${{ secrets.FACTEUR_UGA_PASS }}
           UGA_USER: ${{ secrets.UGA_USER }}
           UGA_PASS: ${{ secrets.UGA_PASS }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
