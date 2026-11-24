@@ -150,39 +150,66 @@ async def executer():
         browser = await pw.chromium.launch()
         try:
             boite = await ouvrir_boite(browser)
-            resultat = await soap(boite, "SearchRequest", {
-                "types": "message", "limit": 30, "sortBy": "dateAsc", "read": 0,
-                "query": {"_content": "in:inbox is:unread"},
-            })
-            messages = resultat.get("m", [])
-            log(f"Accès Zimbra confirmé, {len(messages)} message(s) non lu(s) dans ce lot.")
-            if not messages or os.environ.get("FACTEUR_DIAGNOSTIC") == "true":
+            messages = {}
+            offset = 0
+            diagnostic = os.environ.get("FACTEUR_DIAGNOSTIC") == "true"
+            while True:
+                resultat = await soap(boite, "SearchRequest", {
+                    "types": "message", "limit": 100, "offset": offset, "sortBy": "dateAsc",
+                    "read": 0, "query": {"_content": "in:inbox is:unread"},
+                })
+                lot = resultat.get("m", [])
+                avant = len(messages)
+                messages.update((str(m["id"]), m) for m in lot)
+                if diagnostic or str(resultat.get("more", 0)).lower() not in ("1", "true"):
+                    break
+                if len(messages) == avant:
+                    raise RuntimeError("Pagination Zimbra bloquée")
+                offset += len(lot)
+            log(f"Accès Zimbra confirmé, {len(messages)} non lu(s) recensé(s).")
+            if diagnostic or not messages:
                 return
+            acceptes = ignores = differes = erreurs = 0
             with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30,
                                   context=ssl.create_default_context()) as smtp:
                 smtp.login(GMAIL_ADDRESS, GMAIL_APP_PASSWORD)
-                for m in messages:
+                for m in messages.values():
                     ident = str(m["id"])
                     sujet = m.get("su", "")
                     if not sujet.startswith(("Run failed:", "Run cancelled:")):
                         if ("Confirmez votre réservation : BU Joseph-Fourier" in sujet
                                 and time.time() - int(m["d"]) / 1000 < 240):
+                            differes += 1
                             continue
-                        reponse = await boite.context.request.get(
-                            MAIL + "/service/home/~/", params={"auth": "co", "id": ident,
-                                                              "fmt": "eml", "read": "0"},
-                            max_redirects=0, timeout=30000)
                         try:
-                            if not reponse.ok:
-                                raise RuntimeError(f"Lecture du message impossible (HTTP {reponse.status})")
-                            raw = await reponse.body()
-                        finally:
-                            await reponse.dispose()
-                        if not email.message_from_bytes(raw).get("From"):
-                            raise RuntimeError("Le webmail n’a pas retourné un message MIME valide")
-                        eml, _, _ = preparer_eml_pour_gmail(raw)
-                        smtp.sendmail(GMAIL_ADDRESS, [GMAIL_ADDRESS], eml)
+                            reponse = await boite.context.request.get(
+                                MAIL + "/service/home/~/", params={"auth": "co", "id": ident,
+                                                                  "read": "0"},
+                                max_redirects=0, timeout=30000)
+                            try:
+                                if not reponse.ok:
+                                    raise RuntimeError(f"Lecture du message impossible (HTTP {reponse.status})")
+                                raw = await reponse.body()
+                            finally:
+                                await reponse.dispose()
+                            if not email.message_from_bytes(raw).get("From"):
+                                raise RuntimeError("Le webmail n’a pas retourné un message MIME valide")
+                            eml, _, _ = preparer_eml_pour_gmail(raw)
+                            smtp.sendmail(GMAIL_ADDRESS, [GMAIL_ADDRESS], eml)
+                        except (smtplib.SMTPDataError, smtplib.SMTPRecipientsRefused, ValueError, RuntimeError) as exc:
+                            erreurs += 1
+                            log(f"Message {ident} en attente ({type(exc).__name__}, code {getattr(exc, 'smtp_code', '-')}).")
+                            if getattr(exc, "smtp_code", 0) in (421, 450, 451, 452):
+                                raise RuntimeError("Gmail demande de différer les transferts") from None
+                            continue
+                        acceptes += 1
+                    else:
+                        ignores += 1
                     await soap(boite, "MsgActionRequest", {"action": {"id": ident, "op": "read"}})
+                log(f"Gmail a accepté {acceptes} message(s). Alertes filtrées : {ignores}. "
+                    f"Réservations différées : {differes}. Erreurs : {erreurs}.")
+                if erreurs:
+                    raise RuntimeError("Des messages restent à transférer")
         finally:
             await browser.close()
 
