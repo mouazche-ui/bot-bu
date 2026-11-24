@@ -1,32 +1,32 @@
 name: Facteur UGA vers Gmail
+
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch:
+    inputs:
+      diagnostic:
+        description: "Tester la lecture UGA sans transférer ni marquer de mail lu"
+        type: boolean
+        default: false
+
 concurrency:
   group: facteur-uga-gmail
   cancel-in-progress: false
+
 jobs:
   facteur:
     runs-on: ubuntu-latest
     timeout-minutes: 8
-    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Configuration DNS fiables (Google & Cloudflare) — présent dans la version qui marchait
-        run: |
-          echo -e "nameserver 8.8.8.8\nnameserver 1.1.1.1" | sudo tee /etc/resolv.conf
-      - name: Cache Playwright
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-v1
-      - run: pip install playwright && python -m playwright install chromium
-      - run: python facteur.py || true
+      - run: pip install playwright==1.56.0 && python -m playwright install --with-deps chromium
+      - run: python facteur.py
         env:
+          FACTEUR_DIAGNOSTIC: ${{ inputs.diagnostic && 'true' || 'false' }}
           UGA_USER: ${{ secrets.UGA_USER }}
           UGA_PASS: ${{ secrets.UGA_PASS }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
