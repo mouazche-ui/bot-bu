@@ -1,6 +1,6 @@
 """
-Robot Facteur UGA -> Gmail (Version Blindée v3)
-Correction : Gestion des erreurs de session Zimbra (HTML vs JSON)
+Robot Facteur UGA -> Gmail (Version Adaptative v4)
+Correction : Remplacement de wait_for_url par l'attente d'un élément visuel.
 """
 import base64
 from datetime import datetime
@@ -66,13 +66,14 @@ def marquer_comme_lu(page, msg_id):
 
 def executer_facteur():
     if not all([UGA_USER, UGA_PASS, GMAIL_ADDRESS, GMAIL_APP_PASSWORD]):
-        log("⚠️ Secrets manquants.")
-        return
+        log("⚠️ Secrets manquants."); return
 
     with sync_playwright() as p:
         nav = p.chromium.launch(args=["--disable-gpu", "--no-sandbox", "--disable-dev-shm-usage"])
-        # On utilise un context pour mieux gérer les cookies
-        context = nav.new_context(locale="fr-FR", user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+        context = nav.new_context(
+            locale="fr-FR", 
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        )
         page = context.new_page()
 
         connecte = False
@@ -87,19 +88,22 @@ def executer_facteur():
             log("⚠️ Serveurs UGA injoignables."); nav.close(); return
 
         try:
+            # Saisie des identifiants
             page.fill("#username", UGA_USER)
             page.fill("#password", UGA_PASS)
             page.click("#submitBtn")
-            # ATTENTE CRUCIALE : On attend d'être réellement sur la page du webmail
-            page.wait_for_url("**/webmail/**", timeout=30000) 
-            page.wait_for_timeout(5000) # Temps de respiration pour Zimbra
+            
+            # CORRECTION : On attend un élément qui n'existe QUE dans la boîte mail
+            # #zi_search_inputfield est la barre de recherche de Zimbra
+            log("Attente de l'accès à la boîte mail...")
+            page.wait_for_selector("#zi_search_inputfield", timeout=45000)
+            page.wait_for_timeout(3000) 
+            log("✅ Accès boîte mail confirmé !")
         except Exception as e:
-            log(f"❌ Erreur login : {e}"); nav.close(); return
+            log(f"❌ Échec login : Impossible de trouver l'interface mail. {e}")
+            nav.close(); return
 
-        # Vérification finale : On est-on toujours connectés ?
-        if "authentification" in page.url:
-            log("❌ Redirigé vers la page de login. Mdp incorrect ou blocage Agalan."); nav.close(); return
-
+        # Recherche des mails non lus via l'API interne
         recherche = page.evaluate(
             """async () => {
                 try {
@@ -123,12 +127,7 @@ def executer_facteur():
         )
 
         if not recherche.get("ok"):
-            if recherche.get("error") == "HTML_RESPONSE":
-                log(f"⚠️ Le serveur a renvoyé du HTML au lieu du JSON. URL actuelle : {recherche.get('url')}")
-                log("Cause probable : Session expirée ou redirection vers login.")
-            else:
-                log(f"⚠️ Erreur recherche Zimbra : {recherche.get('error')}")
-            nav.close(); return
+            log(f"⚠️ Erreur recherche : {recherche.get('error')}"); nav.close(); return
 
         messages = recherche["data"].get("Body", {}).get("SearchResponse", {}).get("m", [])
         if not messages:
