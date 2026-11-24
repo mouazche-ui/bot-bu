@@ -3,6 +3,7 @@ from datetime import datetime
 import email
 from email.header import decode_header, make_header
 import os
+import json
 import smtplib
 import asyncio
 import ssl
@@ -55,9 +56,28 @@ def preparer_eml_pour_gmail(raw_bytes):
     return msg.as_bytes(), sujet_original, exp_original
 
 
+def compte_facteur():
+    if os.environ.get("FACTEUR_UGA_USER") or "," not in UGA_USER:
+        return UGA_USER, UGA_PASS
+    choix = os.environ.get("FACTEUR_COMPTE", "").strip()
+    if not choix:
+        raise RuntimeError("Plusieurs comptes UGA : indiquer le login de la boîte à transférer dans la variable FACTEUR_COMPTE.")
+    if os.environ.get("ACCOUNTS_JSON"):
+        comptes = [(a["username"].strip(), a["password"]) for a in json.loads(os.environ["ACCOUNTS_JSON"])]
+    else:
+        noms = [u.strip() for u in UGA_USER.split(",")]
+        mots = UGA_PASS.split(",")
+        if len(noms) != len(mots):
+            raise RuntimeError("Liste de mots de passe ambiguë : utiliser la paire de secrets dédiée au facteur.")
+        comptes = list(zip(noms, mots))
+    correspondances = [item for item in comptes if item[0] == choix]
+    if len(correspondances) != 1:
+        raise RuntimeError("La variable FACTEUR_COMPTE ne désigne pas un compte unique.")
+    return correspondances[0]
+
+
 async def ouvrir_boite(browser):
-    if "," in UGA_USER or "\n" in UGA_USER:
-        raise RuntimeError("UGA_USER contient plusieurs identifiants. Définir FACTEUR_UGA_USER et FACTEUR_UGA_PASS pour la boîte à transférer.")
+    login, mot_de_passe = compte_facteur()
     boite = SimpleNamespace(csrf="", csrf_seen=asyncio.Event())
     boite.context = await browser.new_context(locale="fr-FR", timezone_id="Europe/Paris")
     page = await boite.context.new_page()
@@ -75,8 +95,8 @@ async def ouvrir_boite(browser):
     await page.locator("#username").wait_for(timeout=30000)
     if urlsplit(page.url)[:2] != ("https", "authentification.univ-grenoble-alpes.fr"):
         raise RuntimeError("Destination de connexion Agalan inattendue")
-    await page.locator("#username").fill(UGA_USER)
-    await page.locator("#password").fill(UGA_PASS)
+    await page.locator("#username").fill(login)
+    await page.locator("#password").fill(mot_de_passe)
     await page.locator("#submitBtn").click()
     try:
         await page.wait_for_url(lambda url: urlsplit(url)[:2] == urlsplit(MAIL)[:2],
