@@ -16,8 +16,8 @@ from types import SimpleNamespace
 
 MAIL = "https://webmail.etu.univ-grenoble-alpes.fr"
 
-UGA_USER = os.environ.get("UGA_USER", "").strip()
-UGA_PASS = os.environ.get("UGA_PASS", "").strip()
+UGA_USER = (os.environ.get("FACTEUR_UGA_USER") or os.environ.get("UGA_USER", "")).strip()
+UGA_PASS = os.environ.get("FACTEUR_UGA_PASS") if os.environ.get("FACTEUR_UGA_USER") else os.environ.get("UGA_PASS", "")
 GMAIL_ADDRESS = os.environ.get("GMAIL_ADDRESS", "").strip()
 GMAIL_APP_PASSWORD = os.environ.get("GMAIL_APP_PASSWORD", "").replace(" ", "").strip()
 
@@ -56,6 +56,8 @@ def preparer_eml_pour_gmail(raw_bytes):
 
 
 async def ouvrir_boite(browser):
+    if "," in UGA_USER or "\n" in UGA_USER:
+        raise RuntimeError("UGA_USER contient plusieurs identifiants. Définir FACTEUR_UGA_USER et FACTEUR_UGA_PASS pour la boîte à transférer.")
     boite = SimpleNamespace(csrf="", csrf_seen=asyncio.Event())
     boite.context = await browser.new_context(locale="fr-FR", timezone_id="Europe/Paris")
     page = await boite.context.new_page()
@@ -80,7 +82,17 @@ async def ouvrir_boite(browser):
         await page.wait_for_url(lambda url: urlsplit(url)[:2] == urlsplit(MAIL)[:2],
                                 wait_until="domcontentloaded", timeout=45000)
     except BrowserTimeout:
-        raise RuntimeError("Agalan n’a pas renvoyé la session au webmail après connexion") from None
+        hote = urlsplit(page.url).hostname
+        texte = (await page.locator("body").inner_text(timeout=5000)).casefold()
+        if any(x in texte for x in ("identifiants incorrects", "invalid credentials", "identifiant ou mot de passe incorrect", "mot de passe incorrect", "credentials you provided cannot be determined to be authentic")):
+            raison = "identifiants refusés"
+        elif any(x in texte for x in ("double authentification", "code de vérification", "authentification multifacteur", "one-time password", "second facteur")):
+            raison = "validation supplémentaire demandée"
+        elif await page.locator("input[type=password]").count():
+            raison = "formulaire de connexion toujours affiché"
+        else:
+            raison = "redirection vers le webmail inachevée"
+        raise RuntimeError(f"Agalan : {raison} (hôte : {hote})") from None
     try:
         await asyncio.wait_for(boite.csrf_seen.wait(), timeout=8)
     except asyncio.TimeoutError:
